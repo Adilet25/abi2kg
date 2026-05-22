@@ -1,6 +1,7 @@
+/// <reference types="vite/client" />
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
-// ── Auth types ────────────────────────────────────────────────
 export interface RegisterPayload {
   full_name: string;
   email: string;
@@ -13,7 +14,6 @@ export interface LoginPayload {
   password: string;
 }
 
-// Точно соответствует тому что возвращает бэкенд (TokenOut)
 export interface AuthResponse {
   access_token: string;
   token_type: string;
@@ -34,7 +34,6 @@ export interface UserProfile {
   updated_at: string;
 }
 
-// ── University types ──────────────────────────────────────────
 export interface UniversityListItem {
   id: number;
   name: string;
@@ -92,7 +91,6 @@ export interface Recommendation {
   reasoning: string;
 }
 
-// ── Helpers ───────────────────────────────────────────────────
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Unknown error" }));
@@ -109,7 +107,6 @@ function authHeaders(): Record<string, string> {
   };
 }
 
-// ── Auth API ──────────────────────────────────────────────────
 export const authService = {
   register: (payload: RegisterPayload): Promise<AuthResponse> =>
     fetch(`${BASE_URL}/users/register`, {
@@ -125,9 +122,10 @@ export const authService = {
       body: JSON.stringify(payload),
     }).then(handleResponse<AuthResponse>),
 
+  // ИСПРАВЛЕНО: добавлен дженерик
   getMe: (): Promise<{ id: number; name: string; email: string }> =>
     fetch(`${BASE_URL}/users/me`, { headers: authHeaders() }).then(
-      handleResponse,
+      handleResponse<{ id: number; name: string; email: string }>,
     ),
 
   getProfile: (userId: number): Promise<UserProfile> =>
@@ -146,7 +144,6 @@ export const authService = {
     }).then(handleResponse<UserProfile>),
 };
 
-// ── University API ────────────────────────────────────────────
 export const universityService = {
   getAll: (params?: {
     city?: string;
@@ -173,8 +170,8 @@ export const universityService = {
     }).then(handleResponse<{ recommendations: Recommendation[] }>),
 };
 
-// ── Chat API ──────────────────────────────────────────────────
 export const chatService = {
+  // ИСПРАВЛЕНО: добавлен дженерик
   sendMessage: (
     userId: number,
     message: string,
@@ -183,21 +180,20 @@ export const chatService = {
       method: "POST",
       headers: authHeaders(),
       body: JSON.stringify({ user_id: userId, message }),
-    }).then(handleResponse),
+    }).then(handleResponse<{ reply: string; message_id: number }>),
 
-  getHistory: (userId: number) =>
+  getHistory: (userId: number): Promise<unknown> =>
     fetch(`${BASE_URL}/chat/history/${userId}`, {
       headers: authHeaders(),
-    }).then(handleResponse),
+    }).then(handleResponse<unknown>),
 
-  clearHistory: (userId: number) =>
+  clearHistory: (userId: number): Promise<unknown> =>
     fetch(`${BASE_URL}/chat/history/${userId}`, {
       method: "DELETE",
       headers: authHeaders(),
-    }).then(handleResponse),
+    }).then(handleResponse<unknown>),
 };
 
-// ── JWT helpers ───────────────────────────────────────────────
 export const tokenStorage = {
   set: (token: string) => localStorage.setItem("access_token", token),
   get: () => localStorage.getItem("access_token"),
