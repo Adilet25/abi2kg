@@ -35,6 +35,7 @@ export default function SignUpPage() {
         full_name: form.full_name,
         email: form.email,
         password: form.password,
+        confirm_password: form.confirm_password,
       });
       navigate("/");
     } catch {

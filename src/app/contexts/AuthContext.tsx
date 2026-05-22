@@ -8,9 +8,11 @@ import {
 import { authService, tokenStorage } from "../services/authService";
 import type { RegisterPayload, LoginPayload } from "../services/authService";
 
-interface User {
-  id: string;
-  full_name: string;
+// Бэкенд возвращает: { user_id: number, name: string, email: string, access_token: string }
+// Мы храним в удобном виде:
+export interface User {
+  id: number;
+  name: string;
   email: string;
 }
 
@@ -32,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // При старте — восстанови юзера из localStorage если токен есть
+  // Восстанавливаем сессию при загрузке страницы
   useEffect(() => {
     const stored = localStorage.getItem("auth_user");
     if (stored && tokenStorage.get()) {
@@ -44,14 +46,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Хелпер: маппим ответ бэкенда → User и сохраняем
+  const saveSession = (data: {
+    access_token: string;
+    user_id: number;
+    name: string;
+    email: string;
+  }) => {
+    const user: User = {
+      id: data.user_id, // бэкенд: user_id
+      name: data.name, // бэкенд: name (не full_name!)
+      email: data.email,
+    };
+    tokenStorage.set(data.access_token);
+    localStorage.setItem("auth_user", JSON.stringify(user));
+    setUser(user);
+  };
+
   const register = async (payload: RegisterPayload) => {
     setLoading(true);
     setError(null);
     try {
       const data = await authService.register(payload);
-      tokenStorage.set(data.access_token);
-      localStorage.setItem("auth_user", JSON.stringify(data.user));
-      setUser(data.user);
+      saveSession(data); // ← правильный маппинг
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Registration failed";
       setError(msg);
@@ -66,9 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const data = await authService.login(payload);
-      tokenStorage.set(data.access_token);
-      localStorage.setItem("auth_user", JSON.stringify(data.user));
-      setUser(data.user);
+      saveSession(data); // ← правильный маппинг
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Invalid email or password";

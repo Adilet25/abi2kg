@@ -60,8 +60,8 @@ export function Header() {
   };
 
   // Первая буква имени для аватара
-  const initials = user?.full_name
-    ? user.full_name
+  const initials = user?.name
+    ? user.name
         .split(" ")
         .map((n) => n[0])
         .join("")
@@ -146,9 +146,7 @@ export function Header() {
                   <div className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
                     {initials}
                   </div>
-                  <span className="max-w-[120px] truncate">
-                    {user?.full_name}
-                  </span>
+                  <span className="max-w-[120px] truncate">{user?.name}</span>
                   <ChevronDown
                     size={14}
                     className={`text-gray-400 transition-transform ${userMenuOpen ? "rotate-180" : ""}`}
@@ -160,7 +158,7 @@ export function Header() {
                     {/* Инфо о пользователе */}
                     <div className="px-4 py-3 border-b border-gray-100">
                       <p className="text-sm font-semibold text-gray-900 truncate">
-                        {user?.full_name}
+                        {user?.name}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
                         {user?.email}
@@ -271,7 +269,7 @@ export function Header() {
                     </div>
                     <div>
                       <p className="text-sm font-semibold text-gray-900">
-                        {user?.full_name}
+                        {user?.name}
                       </p>
                       <p className="text-xs text-gray-500">{user?.email}</p>
                     </div>
