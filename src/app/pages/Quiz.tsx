@@ -1,5 +1,3 @@
-// US-12: история квизов + кнопка "пройти заново"
-// US-02: match % breakdown в результатах
 import { useState, useEffect } from "react";
 import {
   ArrowRight,
@@ -11,6 +9,7 @@ import {
   ChevronUp,
   Loader2,
   Lock,
+  ChevronLeft,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -22,14 +21,25 @@ import { UniversityCard } from "../components/UniversityCard";
 import { useAuthContext } from "../contexts/AuthContext";
 import { Link } from "react-router";
 
-// ── Quiz history stored in localStorage ──────────────────────
+// ── Types ─────────────────────────────────────────────────────
+interface QuizAnswers {
+  ort: string;
+  budget: string;
+  city: string;
+  specialty: string;
+  language: string;
+  format: string;
+  level: string;
+}
+
 interface QuizAttempt {
   id: string;
   date: string;
-  answers: { major: string; location: string; budget: string };
+  answers: QuizAnswers;
   topMatches: { uniId: number; uniName: string; score: number }[];
 }
 
+// ── LocalStorage helpers ──────────────────────────────────────
 function loadHistory(userId: number): QuizAttempt[] {
   try {
     const raw = localStorage.getItem(`quiz_history_${userId}`);
@@ -46,28 +56,86 @@ function saveHistory(userId: number, attempts: QuizAttempt[]) {
   );
 }
 
-// ── Questions ────────────────────────────────────────────────
-const QUESTIONS = [
+// ── Questions config ──────────────────────────────────────────
+type QuestionType = "number" | "choice" | "select";
+
+interface Question {
+  id: keyof QuizAnswers;
+  question: string;
+  type: QuestionType;
+  options?: string[];
+  placeholder?: string;
+  min?: number;
+  max?: number;
+}
+
+const QUESTIONS: Question[] = [
   {
-    id: "major",
-    question: "Что хочешь изучать?",
-    placeholder: "например: IT, Медицина, Дизайн...",
-  },
-  {
-    id: "location",
-    question: "В каком городе хочешь учиться?",
-    placeholder: "например: Бишкек, Ош...",
+    id: "ort",
+    question: "Какой у тебя балл ОРТ?",
+    type: "number",
+    placeholder: "от 0 до 245",
+    min: 0,
+    max: 245,
   },
   {
     id: "budget",
-    question: "Максимальный годовой бюджет (сом)?",
-    placeholder: "например: 50000",
-    type: "number",
+    question: "Какой у тебя ежемесячный бюджет на обучение?",
+    type: "choice",
+    options: [
+      "до 15 000 сом",
+      "15 000–30 000 сом",
+      "30 000–50 000 сом",
+      "выше 50 000 сом",
+      "ищу бюджетное место",
+    ],
+  },
+  {
+    id: "city",
+    question: "В каком городе хочешь учиться?",
+    type: "choice",
+    options: ["Бишкек", "Ош", "Джалал-Абад", "Не важно"],
+  },
+  {
+    id: "specialty",
+    question: "Какую специальность хочешь изучать?",
+    type: "select",
+    options: [
+      "IT",
+      "Медицина",
+      "Право",
+      "Экономика",
+      "Инженерия",
+      "Педагогика",
+      "Архитектура",
+      "Дизайн",
+      "Психология",
+      "Журналистика",
+      "Другое",
+    ],
+  },
+  {
+    id: "language",
+    question: "На каком языке хочешь учиться?",
+    type: "choice",
+    options: ["Русский", "Кыргызский", "Английский", "Турецкий", "Не важно"],
+  },
+  {
+    id: "format",
+    question: "Какой формат обучения предпочитаешь?",
+    type: "choice",
+    options: ["Очно", "Заочно", "Онлайн", "Не важно"],
+  },
+  {
+    id: "level",
+    question: "Какой академический уровень тебя интересует?",
+    type: "choice",
+    options: ["Бакалавриат", "Магистратура", "Специалитет"],
   },
 ];
 
-// ── Match calculation ────────────────────────────────────────
-function calcMatch(uni: UniversityListItem, answers: Record<string, string>) {
+// ── Match calculation ─────────────────────────────────────────
+function calcMatch(uni: UniversityListItem, answers: QuizAnswers) {
   let score = 0;
   const breakdown = {
     ort: false,
@@ -76,43 +144,75 @@ function calcMatch(uni: UniversityListItem, answers: Record<string, string>) {
     specialty: false,
   };
 
-  // Location (30)
-  if (uni.city?.toLowerCase().includes(answers.location?.toLowerCase() ?? "")) {
-    score += 30;
-    breakdown.location = true;
+  // ОРТ vs rating as proxy (25 pts)
+  const ort = parseInt(answers.ort ?? "0");
+  if (ort > 0) {
+    // Если рейтинг ≥ 4 — вуз топовый, нужен ОРТ ≥ 130
+    if ((uni.rating ?? 0) >= 4 && ort >= 130) {
+      score += 25;
+      breakdown.ort = true;
+    } else if ((uni.rating ?? 0) < 4 && ort < 130) {
+      score += 25;
+      breakdown.ort = true;
+    } else if ((uni.rating ?? 0) < 4) {
+      score += 15;
+      breakdown.ort = true;
+    }
+  } else {
+    score += 15;
+    breakdown.ort = true; // не указал — не штрафуем
   }
-  // Budget (30) — сравниваем с минимальной стоимостью (нет данных на карточке — даём бонус)
-  const budget = parseInt(answers.budget?.replace(/\D/g, "") ?? "0");
-  if (!budget || budget >= 30000) {
-    score += 20;
+
+  // Бюджет (25 pts)
+  const budgetOk =
+    answers.budget === "ищу бюджетное место"
+      ? true // у любого вуза могут быть бюджетные места
+      : answers.budget === "выше 50 000 сом"
+        ? true
+        : answers.budget === "30 000–50 000 сом"
+          ? (uni.student_count ?? 0) > 500 // крупные вузы дешевле
+          : true;
+  if (budgetOk) {
+    score += 25;
     breakdown.budget = true;
   }
 
-  // Specialty count as proxy (20)
-  if ((uni.specialties_count ?? 0) > 10) {
-    score += 20;
-    breakdown.specialty = true;
+  // Город (25 pts)
+  const cityAnswer = answers.city;
+  if (cityAnswer === "Не важно" || !cityAnswer) {
+    score += 25;
+    breakdown.location = true;
+  } else if (uni.city?.toLowerCase().includes(cityAnswer.toLowerCase())) {
+    score += 25;
+    breakdown.location = true;
   }
 
-  // Rating bonus (20)
-  if ((uni.rating ?? 0) >= 4) {
-    score += 20;
-    breakdown.ort = true;
+  // Специальность — по количеству специальностей как прокси (25 pts)
+  if ((uni.specialties_count ?? 0) >= 5) {
+    score += 25;
+    breakdown.specialty = true;
+  } else if ((uni.specialties_count ?? 0) > 0) {
+    score += 10;
+    breakdown.specialty = true;
   }
 
   return { score: Math.min(score, 100), breakdown };
 }
 
-// ── Component ────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────
 export function Quiz() {
   const { user, isAuthenticated } = useAuthContext();
 
   const [hasStarted, setHasStarted] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({
-    major: "",
-    location: "",
+  const [answers, setAnswers] = useState<QuizAnswers>({
+    ort: "",
     budget: "",
+    city: "",
+    specialty: "",
+    language: "",
+    format: "",
+    level: "",
   });
   const [inputValue, setInputValue] = useState("");
   const [showResults, setShowResults] = useState(false);
@@ -120,11 +220,9 @@ export function Quiz() {
   const [universities, setUniversities] = useState<UniversityListItem[]>([]);
   const [uniLoading, setUniLoading] = useState(false);
 
-  // AI recommendations (если авторизован)
   const [aiRecs, setAiRecs] = useState<Recommendation[] | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
-  // US-12: quiz history
   const [history, setHistory] = useState<QuizAttempt[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [expandedAttempt, setExpanded] = useState<string | null>(null);
@@ -133,81 +231,94 @@ export function Quiz() {
     if (user) setHistory(loadHistory(user.id));
   }, [user]);
 
-  const handleNext = (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!inputValue.trim()) return;
-    const key = QUESTIONS[currentStep].id;
-    const newAnswers = { ...answers, [key]: inputValue };
+  const currentQ = QUESTIONS[currentStep];
+
+  const submitAnswer = (value: string) => {
+    if (!value.trim()) return;
+    const newAnswers = { ...answers, [currentQ.id]: value };
     setAnswers(newAnswers);
     setInputValue("");
 
     if (currentStep < QUESTIONS.length - 1) {
       setCurrentStep((p) => p + 1);
     } else {
-      // Load universities and show results
-      setShowResults(true);
-      setUniLoading(true);
-      universityService
-        .getAll()
-        .then((unis) => {
-          setUniversities(unis);
-
-          // US-12: save to history
-          if (user) {
-            const sorted = unis
-              .map((u) => ({ ...u, ...calcMatch(u, newAnswers) }))
-              .sort((a, b) => b.score - a.score)
-              .slice(0, 3);
-
-            const attempt: QuizAttempt = {
-              id: Date.now().toString(),
-              date: new Date().toLocaleString("ru-RU"),
-              answers: newAnswers as any,
-              topMatches: sorted.map((u) => ({
-                uniId: u.id,
-                uniName: u.name,
-                score: u.score,
-              })),
-            };
-            const updated = [attempt, ...loadHistory(user.id)];
-            saveHistory(user.id, updated);
-            setHistory(updated);
-          }
-
-          // AI рекомендации если авторизован
-          if (user) {
-            setAiLoading(true);
-            universityService
-              .getRecommendations(user.id)
-              .then((data) => setAiRecs(data.recommendations))
-              .catch(() => setAiRecs(null))
-              .finally(() => setAiLoading(false));
-          }
-        })
-        .catch(console.error)
-        .finally(() => setUniLoading(false));
+      finishQuiz(newAnswers);
     }
+  };
+
+  const handleNumberSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitAnswer(inputValue || "0");
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) setCurrentStep((p) => p - 1);
+    else {
+      setHasStarted(false);
+      setCurrentStep(0);
+    }
+  };
+
+  const finishQuiz = (finalAnswers: QuizAnswers) => {
+    setShowResults(true);
+    setUniLoading(true);
+    universityService
+      .getAll()
+      .then((unis) => {
+        setUniversities(unis);
+
+        if (user) {
+          const sorted = unis
+            .map((u) => ({ ...u, ...calcMatch(u, finalAnswers) }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3);
+
+          const attempt: QuizAttempt = {
+            id: Date.now().toString(),
+            date: new Date().toLocaleString("ru-RU"),
+            answers: finalAnswers,
+            topMatches: sorted.map((u) => ({
+              uniId: u.id,
+              uniName: u.name,
+              score: u.score,
+            })),
+          };
+          const updated = [attempt, ...loadHistory(user.id)];
+          saveHistory(user.id, updated);
+          setHistory(updated);
+        }
+
+        if (user) {
+          setAiLoading(true);
+          universityService
+            .getRecommendations(user.id)
+            .then((data) => setAiRecs(data.recommendations))
+            .catch(() => setAiRecs(null))
+            .finally(() => setAiLoading(false));
+        }
+      })
+      .catch(console.error)
+      .finally(() => setUniLoading(false));
   };
 
   const restartQuiz = () => {
     setHasStarted(false);
     setCurrentStep(0);
-    setAnswers({ major: "", location: "", budget: "" });
+    setAnswers({
+      ort: "",
+      budget: "",
+      city: "",
+      specialty: "",
+      language: "",
+      format: "",
+      level: "",
+    });
     setInputValue("");
     setShowResults(false);
     setAiRecs(null);
     setUniversities([]);
   };
 
-  const replayAttempt = (attempt: QuizAttempt) => {
-    setAnswers(attempt.answers);
-    setShowHistory(false);
-    setHasStarted(true);
-    setCurrentStep(QUESTIONS.length - 1);
-    setInputValue(attempt.answers.budget);
-  };
-
-  // Best matches from local scoring
   const bestMatches = showResults
     ? universities
         .map((u) => ({ ...u, ...calcMatch(u, answers) }))
@@ -236,8 +347,8 @@ export function Quiz() {
                 Найди свой вуз
               </h1>
               <p className="text-xl text-gray-500 max-w-2xl mx-auto mb-10 leading-relaxed">
-                Ответь на 3 вопроса и получи персональные рекомендации. Это
-                займёт меньше минуты.
+                Ответь на {QUESTIONS.length} вопросов и получи персональные
+                рекомендации.
               </p>
               <div className="flex flex-col sm:flex-row items-center gap-4">
                 <button
@@ -246,18 +357,15 @@ export function Quiz() {
                 >
                   Начать квиз <ArrowRight size={24} />
                 </button>
-
-                {/* US-12: Show history button */}
                 {isAuthenticated && history.length > 0 && (
                   <button
                     onClick={() => setShowHistory(true)}
                     className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-white px-8 py-4 text-base font-semibold text-gray-700 hover:bg-gray-50 transition-all"
                   >
-                    <History size={20} /> История квизов ({history.length})
+                    <History size={20} /> История ({history.length})
                   </button>
                 )}
               </div>
-
               {!isAuthenticated && (
                 <p className="mt-6 text-sm text-gray-400 flex items-center gap-1.5">
                   <Lock size={14} />
@@ -270,7 +378,7 @@ export function Quiz() {
             </motion.div>
           )}
 
-          {/* ── US-12: History screen ── */}
+          {/* ── History screen ── */}
           {showHistory && (
             <motion.div
               key="history"
@@ -291,7 +399,6 @@ export function Quiz() {
                   ← Назад
                 </button>
               </div>
-
               <div className="space-y-4">
                 {history.map((attempt) => (
                   <div
@@ -308,16 +415,15 @@ export function Quiz() {
                     >
                       <div>
                         <p className="font-semibold text-gray-900">
-                          {attempt.answers.major || "Квиз"}
+                          {attempt.answers.specialty || "Квиз"}
                         </p>
                         <p className="text-sm text-gray-400">{attempt.date}</p>
                       </div>
                       <div className="flex items-center gap-3">
-                        {/* Re-take button */}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            replayAttempt(attempt);
+                            restartQuiz();
                           }}
                           className="flex items-center gap-1.5 text-sm font-semibold text-indigo-600 hover:bg-indigo-50 px-3 py-1.5 rounded-lg transition-colors"
                         >
@@ -330,18 +436,19 @@ export function Quiz() {
                         )}
                       </div>
                     </div>
-
                     {expandedAttempt === attempt.id && (
                       <div className="px-5 pb-5 border-t border-gray-100 pt-4">
-                        <div className="flex flex-wrap gap-3 mb-4">
-                          {Object.entries(attempt.answers).map(([k, v]) => (
-                            <span
-                              key={k}
-                              className="bg-gray-100 text-gray-700 text-xs px-3 py-1 rounded-full"
-                            >
-                              {k}: <strong>{v}</strong>
-                            </span>
-                          ))}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {Object.entries(attempt.answers)
+                            .filter(([, v]) => v)
+                            .map(([k, v]) => (
+                              <span
+                                key={k}
+                                className="bg-gray-100 text-gray-700 text-xs px-3 py-1 rounded-full"
+                              >
+                                {k}: <strong>{v}</strong>
+                              </span>
+                            ))}
                         </div>
                         <p className="text-sm font-semibold text-gray-500 mb-2">
                           Топ совпадений:
@@ -387,7 +494,8 @@ export function Quiz() {
               transition={{ duration: 0.3 }}
               className="max-w-2xl mx-auto w-full flex-1 flex flex-col justify-center pb-20"
             >
-              <div className="mb-16">
+              {/* Progress */}
+              <div className="mb-12">
                 <div className="flex justify-between text-sm font-semibold text-gray-400 mb-3 px-1">
                   <span>
                     Вопрос {currentStep + 1} из {QUESTIONS.length}
@@ -406,41 +514,90 @@ export function Quiz() {
                 </div>
               </div>
 
-              <div className="relative min-h-[160px]">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={currentStep}
-                    initial={{ opacity: 0, y: 15 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -15 }}
-                    transition={{ duration: 0.3 }}
-                    className="absolute inset-0"
-                  >
-                    <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-10 text-center">
-                      {QUESTIONS[currentStep].question}
-                    </h2>
-                    <form onSubmit={handleNext} className="relative">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={currentStep}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -15 }}
+                  transition={{ duration: 0.25 }}
+                >
+                  <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-8 text-center">
+                    {currentQ.question}
+                  </h2>
+
+                  {/* NUMBER input */}
+                  {currentQ.type === "number" && (
+                    <form onSubmit={handleNumberSubmit} className="relative">
                       <div className="flex items-center overflow-hidden rounded-full bg-white p-2.5 shadow-2xl ring-1 ring-black/5 focus-within:ring-2 focus-within:ring-indigo-600 transition-all">
                         <input
-                          type={QUESTIONS[currentStep].type || "text"}
+                          type="number"
                           autoFocus
+                          min={currentQ.min}
+                          max={currentQ.max}
                           value={inputValue}
                           onChange={(e) => setInputValue(e.target.value)}
-                          placeholder={QUESTIONS[currentStep].placeholder}
+                          placeholder={currentQ.placeholder}
                           className="w-full border-0 bg-transparent px-6 py-4 text-xl text-gray-900 placeholder:text-gray-400 focus:outline-none"
                         />
                         <button
                           type="submit"
-                          disabled={!inputValue.trim()}
-                          className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 disabled:opacity-50 transition-all shrink-0"
+                          className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-105 transition-all shrink-0"
                         >
                           <ArrowRight size={24} />
                         </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => submitAnswer("0")}
+                        className="mt-3 text-sm text-gray-400 hover:text-gray-600 w-full text-center"
+                      >
+                        Пропустить →
+                      </button>
                     </form>
-                  </motion.div>
-                </AnimatePresence>
-              </div>
+                  )}
+
+                  {/* CHOICE buttons */}
+                  {currentQ.type === "choice" && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {currentQ.options!.map((opt) => (
+                        <button
+                          key={opt}
+                          onClick={() => submitAnswer(opt)}
+                          className="w-full text-left px-6 py-4 rounded-2xl bg-white border-2 border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 font-semibold text-gray-800 transition-all hover:shadow-md"
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* SELECT dropdown */}
+                  {currentQ.type === "select" && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {currentQ.options!.map((opt) => (
+                          <button
+                            key={opt}
+                            onClick={() => submitAnswer(opt)}
+                            className="w-full text-center px-4 py-3 rounded-2xl bg-white border-2 border-gray-200 hover:border-indigo-500 hover:bg-indigo-50 font-semibold text-gray-800 transition-all hover:shadow-md text-sm"
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+
+              {/* Back button */}
+              <button
+                onClick={handleBack}
+                className="mt-10 flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 mx-auto transition-colors"
+              >
+                <ChevronLeft size={16} /> Назад
+              </button>
             </motion.div>
           )}
 
@@ -457,7 +614,19 @@ export function Quiz() {
                   <h2 className="text-3xl font-bold text-gray-900">
                     Твои лучшие совпадения
                   </h2>
-                  <p className="text-gray-500 mt-1">На основе твоих ответов</p>
+                  <p className="text-gray-500 mt-1">
+                    {answers.specialty && (
+                      <span>
+                        Специальность: <strong>{answers.specialty}</strong>{" "}
+                        ·{" "}
+                      </span>
+                    )}
+                    {answers.city && answers.city !== "Не важно" && (
+                      <span>
+                        Город: <strong>{answers.city}</strong>
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <button
                   onClick={restartQuiz}
@@ -473,7 +642,7 @@ export function Quiz() {
                 </div>
               ) : (
                 <>
-                  {/* AI recommendations block */}
+                  {/* AI recommendations */}
                   {isAuthenticated && (
                     <div className="mb-10 rounded-2xl border border-indigo-200 bg-indigo-50 p-6">
                       <div className="flex items-center gap-2 mb-3">
@@ -540,19 +709,18 @@ export function Quiz() {
                             <Sparkles size={16} /> #1 Совпадение
                           </div>
                         )}
-                        {/* US-02: передаём match % и breakdown */}
                         <UniversityCard
                           university={uni}
                           matchPercent={uni.score}
                           matchBreakdown={uni.breakdown}
                         />
-                        <div className="mt-4 p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-sm text-indigo-900">
+                        <div className="mt-4 p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-sm">
                           <span className="font-bold block mb-1 text-indigo-800">
                             Почему подходит:
                           </span>
                           <p className="text-indigo-700/80">
-                            Совпадение {uni.score}% по критериям: специальность,
-                            город и бюджет.
+                            Совпадение {uni.score}% по городу, бюджету и
+                            специальности.
                             {uni.score >= 80
                               ? " Отличный выбор!"
                               : uni.score >= 50
